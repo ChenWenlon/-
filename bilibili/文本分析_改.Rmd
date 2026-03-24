@@ -1,0 +1,336 @@
+---
+title: "文本分析2"
+author: "cwl"
+date: "2025-01-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+library(stringr)
+library(jiebaR)
+library(stopwords)
+library(tm)
+library(tidytext)
+library(wordcloud2)
+library(dplyr)
+library(devtools)
+setwd("C:/Users/chenwenlong/Desktop/MediaCrawler-main/MediaCrawler-main/data/bilibili")
+contents <- readLines("content.txt")
+print(head(contents))
+# 对评论内容进行去重处理
+#unique_comment_data <- unique(contents)
+#print(unique_comment_data[1:100])
+# 定义要保留的标点符号
+punctuations <- "[[:punct:]]"
+# 过滤除中英文、数字和指定标点符号以外的字符
+filter_contents<- str_replace_all(contents, paste0("[^[:alnum:][:space:]", punctuations, "]]"), "")
+# 查看去重且过滤后的的数据行数
+cat("去重且过滤后的数据行数：", nrow(filter_contents), "\n")
+
+print(head(filter_contents))
+
+#停用词库调用并清除停用词
+stopwords<-stopwords::stopwords("zh",source = "misc")
+# 分词
+mixseg <- worker()
+seg <- segment(filter_contents,mixseg)
+
+# 在过滤停用词之前，为每个分词添加评论编号（避免数据丢失造成行数不匹配）
+seg_with_id <- lapply(1:length(seg), function(i) {
+  data.frame(word = seg[[i]], id = i, stringsAsFactors = FALSE)
+})
+seg_with_id <- do.call(rbind, seg_with_id)
+
+# 过滤停用词
+seg_filtered <- filter_segment(seg_with_id$word, stopwords)
+seg_df <- data.frame(word = seg_filtered, id = seg_with_id$id[seg_with_id$word %in% seg_filtered], stringsAsFactors = FALSE)
+
+
+#seg <- filter_segment(seg,stopwords)
+#head(seg)
+```
+```{r}
+wordfreqs <- jiebaR::freq(seg_df$word) # 统计词频
+wordfreqs <- dplyr::arrange(wordfreqs, -freq) # 将词频由高到低展示
+head(wordfreqs,100) # 看看前100个词频
+#词云分析
+colnames(wordfreqs)[1] <- 'word'
+row.names(wordfreqs)<-wordfreqs$word
+my_graph <- wordcloud2(
+  data=wordfreqs,size=0.5
+)
+my_graph
+#去除（doge）
+wordfreqs <- wordfreqs %>%
+  filter(word!='doge')# 在词云图中剔除
+my_graph_2 <- wordcloud2(
+  data=wordfreqs[1:500,],size=0.5
+)
+my_graph_2
+#特朗普天命所归，互联网吃瓜美国
+#刺杀苦肉计疑云重重，拜登特朗普选势已定
+```
+```{r}
+#情感分析
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(plyr)
+pos.comment <- read.table("正面评价词语（中文）.txt")
+neg.comment <- read.table("负面评价词语（中文）.txt")
+pos.emotion <- read.table("正面情感词语（中文）.txt")
+neg.emotion <- read.table("负面情感词语（中文）.txt")
+#赋予权重
+#positive$weight <- rep(1,length(positive))
+#colnames(positive) <- c('word','weight')
+#negative$weight <- rep(-1,length(negative))
+#colnames(negative) <- c('word','weight')
+#正面结果和正负情感词表合并，定位情感词
+#word <- result
+# 设置权重（情感词典中只有情感词需要自己设置权重）
+pos_comment_weight <- 2
+neg_comment_weight <- -2
+pos_emotion_weight <- 1
+neg_emotion_weight <- -1
+
+# 为每个词典添加权重列
+pos.comment$weight <- pos_comment_weight
+neg.comment$weight <- neg_comment_weight
+pos.emotion$weight <- pos_emotion_weight
+neg.emotion$weight <- neg_emotion_weight
+
+# 合并所有情感词典
+pos_dict <- rbind(pos.comment, pos.emotion)
+neg_dict <- rbind(neg.comment, neg.emotion)
+colnames(pos_dict) <- c("word", "weight")
+colnames(neg_dict) <- c("word", "weight")
+
+all_dict <- rbind(pos_dict, neg_dict)
+
+# 合并分词结果和情感词典
+seg_df <- merge(seg_df, all_dict, by = "word", all.x = TRUE)
+
+# 将没有匹配到的词的情感得分设为0
+seg_df$weight[is.na(seg_df$weight)] <- 0
+
+# 计算每条评论的情感得分
+sentiment_scores <- seg_df %>%
+  group_by(id) %>%
+  summarise(sentiment_score = sum(weight))
+
+# 判断情感倾向
+sentiment_scores$sentiment <- ifelse(sentiment_scores$sentiment_score > 0, "积极",
+                                     ifelse(sentiment_scores$sentiment_score < 0, "消极", "中性"))
+
+# 查看情感分析结果
+head(sentiment_scores)
+
+```
+```{r}
+# 将分词结果转换为数据框
+seg_df <- data.frame(word = unlist(seg), stringsAsFactors = FALSE)
+
+# 筛选出情感词
+emotional_words_df <- seg_df %>%
+  filter(word %in% all_dict$word)
+
+# 统计情感词的词频
+emotional_wordfreqs <- jiebaR::freq(emotional_words_df$word)
+
+# 将词频由高到低展示
+emotional_wordfreqs <- dplyr::arrange(emotional_wordfreqs, -freq)
+
+# 查看前100个情感词词频
+head(emotional_wordfreqs, 100)
+
+# 词云分析
+colnames(emotional_wordfreqs)[1] <- 'word'
+row.names(emotional_wordfreqs) <- emotional_wordfreqs$word
+emotional_wordfreqss <- emotional_wordfreqs %>%
+  filter(word!='是')# 在词云图中剔除
+# 绘制情感词词云
+emotion_wordcloud <- wordcloud2(
+  data = emotional_wordfreqss[1:100,],
+  size = 0.5
+)
+emotion_wordcloud
+```
+#情感分析结果是积极的，结合词云可以得出大多数网友还是一种看乐子的心态，是在酒足饭饱后或者饭时的闲谈谈资。前面的高频词中最高频的词是（doge），即狗头符号，实际上也可以印证这一点（也受到b站用户倾向影响，b站用户倾向于在评论时加上狗头符号）
+```{r}
+library(topicmodels)
+# 分批处理数据，每次处理1000条文档（主题分析构建矩阵时不分批内存会爆）
+batch_size <- 1000
+num_batches <- ceiling(length(seg_filtered) / batch_size)
+
+# 确定全局词汇表
+global_vocab <- character()
+
+for (i in 1:num_batches) {
+  start_idx <- (i - 1) * batch_size + 1
+  end_idx <- min(i * batch_size, length(seg_filtered))
+  
+  # 将分词结果转换为文档 - 词矩阵（DTM）
+  corpus <- Corpus(VectorSource(seg_filtered[start_idx:end_idx]))
+  dtm_batch <- DocumentTermMatrix(corpus)
+  
+  # 计算每个词的词频
+  word_freqs <- colSums(as.matrix(dtm_batch))
+  
+  # 筛选出高频词的索引
+  high_freq_indices <- which(word_freqs > 5)
+  
+  # 获取高频词
+  high_freq_words <- names(word_freqs)[high_freq_indices]
+  
+  # 更新全局词汇表
+  global_vocab <- union(global_vocab, high_freq_words)
+  
+  # 释放内存
+  rm(corpus, dtm_batch)
+  gc()
+}
+
+dtm_list <- list()
+
+for (i in 1:num_batches) {
+  start_idx <- (i - 1) * batch_size + 1
+  end_idx <- min(i * batch_size, length(seg_filtered))
+  
+  # 将分词结果转换为文档 - 词矩阵（DTM）
+  corpus <- Corpus(VectorSource(seg_filtered[start_idx:end_idx]))
+  dtm_batch <- DocumentTermMatrix(corpus, control = list(dictionary = global_vocab))
+  
+  dtm_list[[i]] <- dtm_batch
+  
+  # 释放内存
+  rm(corpus, dtm_batch)
+  gc()
+}
+
+# 合并所有批次的DTM
+dtm <- do.call(rbind, dtm_list)
+
+# 过滤掉所有元素都为零的行（避免出现0元素的行）
+non_zero_rows <- rowSums(as.matrix(dtm)) > 0
+dtm <- dtm[non_zero_rows, ]
+
+# 构建LDA模型，设置主题数量为5
+lda_model <- LDA(dtm, k = 5, control = list(seed = 1234))
+
+# 查看每个主题的前10个关键词
+terms <- terms(lda_model, 10)
+terms
+
+# 将主题 - 词分布转换为数据框
+topic_terms <- tidy(lda_model, matrix = "beta")
+
+# 查看每个主题的前10个关键词及其概率
+top_terms <- topic_terms %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+print(top_terms)
+
+# 查看每个文档的主题分布
+document_topics <- tidy(lda_model, matrix = "gamma")
+print(head(document_topics))
+```
+#主题分析表明：主题1倾向于“懂王刺杀自导自演”，主题2评价杀手“瞄准”“专业”，主题3特朗普“天命所归”，主题4讨论“安倍受到枪击和川普对比”，主题5倾向于对up主评论的评价。
+
+
+```{r ip计算,eval=FALSE}
+library(ggplot2)
+library(dplyr)
+library(maps)
+library(mapdata)
+setwd("C:/Users/chenwenlong/Desktop/MediaCrawler-main/MediaCrawler-main/data/bilibili")
+# 读取IP属地数据
+ip_location_data <- read.csv("2_detail_comments_2025-01-22.csv")
+
+# 处理缺失值，移除含有缺失值的行
+ip_location_data <- ip_location_data %>%
+  filter(!is.na(ip_location))
+
+# 计算每个IP属地的出现频率
+ip_location_frequency <- ip_location_data %>%
+  count(ip_location) %>%
+  arrange(desc(n))
+
+```
+
+#rmd文件能够跑通上述代码，
+```{r ip,eval=FALSE}
+# 手动创建一个包含中国省份经纬度的数据集
+province_coords <- data.frame(
+  ip_location = c("北京", "天津", "河北", "山西", "内蒙古", 
+                  "辽宁", "吉林", "黑龙江", "上海", "江苏", 
+                  "浙江", "安徽", "福建", "江西", "山东", 
+                  "河南", "湖北", "湖南", "广东", "广西", 
+                  "海南", "重庆", "四川", "贵州", "云南", 
+                  "西藏", "陕西", "甘肃", "青海", "宁夏", 
+                  "新疆", "中国台湾", "中国香港", "中国澳门"),
+  long = c(116.4074, 117.2009, 114.53, 112.5492, 111.6708, 
+           123.4291, 125.3245, 126.6322, 121.4737, 118.7674, 
+           120.1536, 117.283, 119.3062, 115.8922, 117.0009, 
+           113.6654, 114.2986, 112.9822, 113.2644, 108.3200, 
+           110.3467, 106.5515, 104.0657, 106.7135, 102.7123, 
+           87.6166, 108.9480, 103.8343, 101.7789, 106.2782, 
+           87.6166, 121.5114, 114.1747, 113.5491),
+  lat = c(39.9042, 39.1328, 38.03, 37.8777, 40.8183, 
+          41.8064, 43.8800, 45.7569, 31.2304, 32.0415, 
+          30.2598, 31.8611, 26.0792, 28.6800, 36.6574, 
+          34.7623, 30.5844, 28.2102, 23.1291, 22.8272, 
+          20.0207, 29.5630, 30.6596, 26.5762, 25.0406, 
+          29.6479, 34.2632, 36.0612, 36.6173, 38.4664, 
+          43.7911, 23.9816, 22.3193, 22.1987)
+)
+
+
+ip_location <- province_coords$ip_location
+# 合并数据
+ip_location_frequency <- ip_location_frequency %>%
+  left_join(province_coords, by = "ip_location")
+
+# 过滤掉没有匹配到经纬度信息的行
+ip_location_frequency <- ip_location_frequency %>%
+  filter(!is.na(long) & !is.na(lat))
+
+# 获取中国省份地图数据
+china_provinces <- map_data("china")
+
+
+# 绘制地图
+ggplot() +
+  geom_polygon(data = china_provinces, aes(x = long, y = lat, group = group), fill = "lightgray", color = "black") +
+  geom_point(data = ip_location_frequency, aes(x = long, y = lat, size = n), color = "red", shape = 16) +
+  scale_size_continuous(name = "频率") +
+  labs(title = "IP属地地理分布") +
+  theme_void() +
+  guides(size = guide_legend())  # 确保图例显示
+```
+#整体上来看，广东、长三角、京津冀地区为发言热点地区，西部和北部等内陆地区评论较少。而台湾和港澳由于相关限制，使用大陆平台较少，数据较少。
